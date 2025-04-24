@@ -8,5 +8,5 @@
 */
 -- AlterTable
 ALTER TABLE `fest_tb` DROP COLUMN `festNumDate`,
-    ADD COLUMN `festNumday` INTEGER NOT NULL,
+    ADD COLUMN `festNumDay` INTEGER NOT NULL,
     MODIFY `festCost` DOUBLE NOT NULL;

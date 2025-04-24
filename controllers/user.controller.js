@@ -1,27 +1,33 @@
-const { PrismaClient } = require('@prisma/client');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const { response } = require('express');
-const { info } = require('console');
-const { request } = require('http');
+//? จัดการ DB
+const { PrismaClient } = require("@prisma/client");
 
-//? สร้างตัวแปรอ้างอิงสำหรับ prisma เพื่อเอาไปใช้
+//? จัดการการ Upload
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+
+//? สร้างตัวแปรอ้างอิงสำหรับ prisma เพื่อเอาไปงาน
 const prisma = new PrismaClient();
 
-//? อัปโหลดไฟล์-----------------------------
+//? การอัปโหลดไฟล์----------------------------
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, "images/users");
   },
   filename: (req, file, cb) => {
-    cb(null, 'user_' + Math.floor(Math.random() * Date.now()) + path.extname(file.originalname));
-  }
-})
+    cb(
+      null,
+      "user_" +
+      Math.floor(Math.random() * Date.now()) +
+      path.extname(file.originalname)
+    );
+  },
+});
+
 exports.uploadUser = multer({
   storage: storage,
   limits: {
-    fileSize: 1000000 //? file 1 mb
+    fileSize: 10000000,
   },
   fileFilter: (req, file, cb) => {
     const fileTypes = /jpeg|jpg|png/;
@@ -31,104 +37,125 @@ exports.uploadUser = multer({
       return cb(null, true);
     }
     cb("Error: Images Only");
-  }
-}).single("userImage");//? ต้องตรงกับ column ในฐานข้อมูล
-//?-------------------------------------------------
+  },
+}).single("userImage");
+//-------------------------------------------
 
-//? การเอาข้อมูลที่ส่งมาจาก Frontend เพิ่ม(Create/Insert) ลงตารางใน DB
+//? ฟังก์ชันการทำงานต่างของ API ที่สร้างขึ้นมา----------------------------------
+//? เพิ่ม USER (Create/Insert) ลงตารางใน DB-----------
 exports.createUser = async (req, res) => {
   try {
-    const { userFullname, userName, userPassword } = req.body
+    //? -----
     const result = await prisma.user_tb.create({
+      //?  .create ใช้สำหรับเพิ่ม (insert) ข้อมูล
       data: {
-        userFullname: userFullname,
-        userName: userName,
-        userPassword: userPassword,
-        userImage: req.file ? req.file.path.replace("images\\users\\", '') : "",
-      }
-    })
-
+        userFullname: req.body.userFullname,
+        userName: req.body.userName,
+        userPassword: req.body.userPassword,
+        userImage: req.file
+          ? req.file.path.replace("images\\users\\", "")
+          : "",
+      },
+    });
+    //? -----
     res.status(201).json({
-      message: "เพิ่มข้อมูลสําเร็จ",
-      data: result
-    })
-  } catch (err) {
+      message: "OK",
+      info: result,
+    });
+  } catch (error) {
     res.status(500).json({
-      message: `พบเจอปัญหาในการทำงาน: ${err}`
-    })
-    console.log('Error', err);
+      message: `พบปัญหาในการทำงาน: ${error}`,
+    });
+    console.log(`Error: ${error}`);
   }
-}
-//?-------------------------------------------------
+};
 
-exports.checklogin = async (req, res) => {
+//? ตรวจสอบ USER (Read/Select) จากชื่อผู้ใช้ และรหัสผ่าน กับตารางใน DB---------
+exports.checkLogin = async (req, res) => {
   try {
-   //-----
-   const result = await prisma.user_tb.findFirst({
-    where: {
-      userName: request.params.userName,
-      userPassword :request.body.userPassword, 
+    //? ----
+    const result = await prisma.user_tb.findFirst({
+      where: {
+        userName: req.params.userName,
+        userPassword: req.params.userPassword,
+      },
+    });
+    //? -----
+    if (result) {
+      res.status(200).json({
+        message: "Ok",
+        info: result,
+      });
+    } else {
+      res.status(404).json({
+        message: "OK",
+        info: result,
+      });
     }
-   });
-   if(result){
-    response.status(200).json({
-      massge: "OK",
-      info: result,
-    });
-   }else{
-    response.status(404).json({
-      massge: "OK",
-      info: result,
-    });
-  }//find = Select in SQL 
-  } catch (err) {
+  } catch (error) {
     res.status(500).json({
-      message: `พบเจอปัญหาในการทำงาน: ${err}`
-    })
-    console.log('Error', err);
+      message: `พบปัญหาในการทำงาน: ${error}`,
+    });
+    console.log(`Error: ${error}`);
   }
-}
+};
 
-exports.updateUser = async(request,response) => {
-  try{
-    const result = {};
-    if(request.file){
-      const userResult = await prisma.user_tb({
-        where:{
-          userID: request.params.userID
-        }
-      })
-      if(userResult.userImage){
-        fs.unlink(path.join("image/users",userResult.userImage));
+//? แก้ไข USER (Update) ข้อมูลตารางใน DB---------
+exports.updateUser = async (req, res) => {
+  try {
+    let result = {};
+    //? ----
+    //? ด้วยความที่มีการเก็บรูป เลยต้องมีการตรวจสอบก่อนว่า ข้อมูลนั้นมีรูปหรือไม่ ถ้าไม่มีรูปก็ไม่มีอะไร
+    //? แต่ถ้ามีรูป แล้วมีการอัปเดจรูป รูปที่มีอยู่เดิมจะถูกลบทิ้ง
+    //? ตรวจสอบว่าการแก้ไขนี้มีการอัปโหลดรูปมาเพื่อแก้ไขหรือไม่
+    if (req.file) {
+      //? แก้ไขข้อมูลแบบแก้ไขรูปด้วย ต้องลบรูปเก่าออกก่อน
+      //? ดึงข้อมูลของ user คนที่จะแก้ไข
+      const userResult = await prisma.user_tb.findFirst({
+        where: {
+          userId: parseInt(req.params.userId),
+        },
+      });
+      //? เอาข้อมูลของ user ที่ได้มามาดูว่ามีรูปไหม ถ้ามีให้ลบรูปนั้นทิ้ง
+      if (userResult.userImage) {
+        fs.unlinkSync(path.join("images/users", userResult.userImage)); //ลบรูปทิ้ง
       }
-      const result = await prisma.user_tb.update({
-        where:{
-          userID : request.params.userID,
+      //? แก้ไขข้อมูลในฐานข้อมูล
+      result = await prisma.user_tb.update({
+        where: {
+          userId: parseInt(req.params.userId),
         },
-        data:{
-          userFullname: request.body.userFullname,
-          userName: request.body.userName,
-          userPassword: request.body.userPassword,
-          userImage: request.file.path.replace("images\\users\\",""),
+        data: {
+          userFullname: req.body.userFullname,
+          userName: req.body.userName,
+          userPassword: req.body.userPassword,
+          userImage: req.file.path.replace("images\\users\\", ""),
         },
-      })
-  }else{
-    const result = await prisma.user_tb.update({
-      where:{
-        userID : request.params.userID,
-      },
-      data:{
-        userFullname: request.body.userFullname,
-        userName: request.body.userName,
-        userPassword: request.body.userPassword,
-      },
-    })
-    
+      });
+    } else {
+      //? แก้ไขข้อมูลแบบไม่มีการแก้ไขรูป
+      result = await prisma.user_tb.update({
+        where: {
+          userId: parseInt(req.params.userId),
+        },
+        data: {
+          userFullname: req.body.userFullname,
+          userName: req.body.userName,
+          userPassword: req.body.userPassword,
+        },
+      });
+    }
+    //? -----
+    res.status(200).json({
+      message: "Ok",
+      info: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: `พบปัญหาในการทำงาน: ${error}`,
+    });
+    console.log(`Error: ${error}`);
   }
-} catch (err) {
-  res.status(500).json({
-    message: `พบเจอปัญหาในการทำงาน: ${err}`
-  })
-  console.log('Error', err);
-}
-}
+};
+
+//? --------------------------------------------------------------------
